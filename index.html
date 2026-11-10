@@ -191,145 +191,87 @@
   </div>
 
   <script>
-  /* ================== BAHASA OTOMATIS (ID / EN) ================== */
-  const I18N = {
-    id: {
-      upload:'Unggah',
-      advertise:'Iklan',
-      adSlot:'Slot Iklan 728×90 (contoh)',
-      noVideo:'Browser kamu tidak mendukung pemutar video HTML5.',
-      hint:'Putar untuk memulai',
-      ageTitle:'Konfirmasi Usia',
-      ageText:'Konten ini khusus pengunjung berusia 18 tahun ke atas. Apakah Anda berusia 18+ dan ingin melanjutkan?',
-      continueBtn:'Lanjutkan Menonton',
-      cancelBtn:'Batal'
-    },
-    en: {
-      upload:'Upload',
-      advertise:'Advertise',
-      adSlot:'Ad Slot 728×90 (example)',
-      noVideo:'Your browser does not support the HTML5 video player.',
-      hint:'Press play to start',
-      ageTitle:'Age Confirmation',
-      ageText:'This content is intended for visitors aged 18 and over. Are you 18+ and would you like to continue?',
-      continueBtn:'Continue Watching',
-      cancelBtn:'Cancel'
-    }
-  };
-  let LANG = 'id';
+    // Update teks durasi kecil
+    const v = document.getElementById('video');
+    const meta = document.querySelector('.meta');
+    function fmt(t){ const m = Math.floor(t/60); const s = Math.floor(t%60).toString().padStart(2,'0'); return `${m}:${s}`; }
+    v.addEventListener('loadedmetadata', ()=>{ meta.textContent = `0:00 / ${fmt(v.duration)}`; });
+    v.addEventListener('timeupdate',     ()=>{ meta.textContent = `${fmt(v.currentTime)} / ${fmt(v.duration)}`; });
 
-  function applyLang(lang){
-    LANG = (lang === 'id') ? 'id' : 'en';
-    document.documentElement.lang = LANG;
-    document.querySelectorAll('[data-i18n]').forEach(function(el){
-      const k = el.getAttribute('data-i18n');
-      if (I18N[LANG][k] != null) el.textContent = I18N[LANG][k];
+    /* ===== VIDEO BERGANTI OTOMATIS TIAP RELOAD ===== */
+    const VIDEO_LIST_URL = "videos.txt";   // daftar link, satu link per baris
+    const AUTO_NEXT      = true;           // true = setelah selesai otomatis lanjut ke video berikutnya
+    const FALLBACK_LIST  = ["https://cdn.aceimg.com/dAb0N7A6i.mp4"]; // dipakai jika videos.txt gagal dimuat
+    const QUEUE_KEY      = "video_queue_v1";
+
+    let LIST = [];
+
+    function hashList(list){
+      const s = list.join("|"); let h = 0;
+      for(let i=0;i<s.length;i++){ h = (h*31 + s.charCodeAt(i)) | 0; }
+      return h + ":" + list.length;
+    }
+    function shuffle(a){
+      for(let i=a.length-1;i>0;i--){
+        const j = Math.floor(Math.random()*(i+1));
+        [a[i],a[j]] = [a[j],a[i]];
+      }
+      return a;
+    }
+    function readState(){
+      try{ return JSON.parse(localStorage.getItem(QUEUE_KEY) || "null"); }catch(e){ return null; }
+    }
+    function writeState(s){
+      try{ localStorage.setItem(QUEUE_KEY, JSON.stringify(s)); }catch(e){}
+    }
+
+    // Antrean acak per pengunjung: semua video tampil dulu sebelum ada yang berulang
+    function nextVideo(){
+      if(LIST.length === 1) return LIST[0];
+      const sig = hashList(LIST);
+      let st = readState();
+      const lastShown = (st && st.sig === sig && typeof st.lastShown === "number") ? st.lastShown : -1;
+
+      if(!st || st.sig !== sig || !Array.isArray(st.order) || st.pos >= st.order.length){
+        const order = shuffle(LIST.map((_,i)=>i));
+        if(order[0] === lastShown){ [order[0],order[1]] = [order[1],order[0]]; } // hindari video yang sama dua kali berturut-turut
+        st = { sig, order, pos:0, lastShown };
+      }
+      const idx = st.order[st.pos++];
+      st.lastShown = idx;
+      writeState(st);
+      return LIST[idx];
+    }
+
+    function parseList(text){
+      const seen = new Set();
+      return text.split(/\r?\n/)
+        .map(l => l.trim())
+        .filter(l => l && !l.startsWith("#") && /^https?:\/\//i.test(l))
+        .filter(l => !seen.has(l) && seen.add(l));
+    }
+
+    async function initVideo(){
+      try{
+        const res = await fetch(VIDEO_LIST_URL, { cache:"no-cache" });
+        if(!res.ok) throw new Error("HTTP " + res.status);
+        LIST = parseList(await res.text());
+      }catch(e){
+        LIST = [];
+      }
+      if(!LIST.length) LIST = FALLBACK_LIST.slice();
+      v.src = nextVideo();
+      v.load();
+    }
+
+    v.addEventListener("ended", ()=>{
+      if(!AUTO_NEXT || LIST.length < 2) return;
+      v.src = nextVideo();
+      v.play().catch(()=>{});
     });
-    updateMeta();
-  }
 
-  /* Tebakan awal (sebelum data negara dari GeoJS masuk): zona waktu / bahasa browser */
-  function guessLang(){
-    try{
-      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
-      if (/^Asia\/(Jakarta|Makassar|Jayapura|Pontianak)$/.test(tz)) return 'id';
-    }catch(_){}
-    const nl = (navigator.language || '').toLowerCase();
-    return nl.indexOf('id') === 0 ? 'id' : 'en';
-  }
-
-  /* ================== VIDEO ================== */
-  const v    = document.getElementById('video');
-  const meta = document.getElementById('meta');
-  function fmt(t){
-    if (!isFinite(t)) t = 0;
-    const m = Math.floor(t/60), s = Math.floor(t%60).toString().padStart(2,'0');
-    return m + ':' + s;
-  }
-  function updateMeta(){
-    const started = v.currentTime > 0 || !v.paused;
-    meta.textContent = fmt(v.currentTime) + ' / ' + fmt(v.duration) +
-      (started ? '' : ' • ' + I18N[LANG].hint);
-  }
-  v.autoplay = false;
-  v.addEventListener('loadedmetadata', updateMeta);
-  v.addEventListener('timeupdate', updateMeta);
-  v.addEventListener('play', updateMeta);
-  v.addEventListener('pause', updateMeta);
-
-  applyLang(guessLang());
-
-  /* ================== POPUP KONFIRMASI USIA ================== */
-  const AGE_NEXT_URL       = "https://crn77.com/4/9850213"; // tujuan tombol LANJUTKAN MENONTON
-  const OFFER_URL          = "https://crn77.com/4/9850213"; // tujuan tombol BATAL
-  const AUTO_SHOW_DELAY_MS = 15000;
-  const REMEMBER_TTL_MIN   = 120;
-
-  const $root      = document.documentElement;
-  const $body      = document.body;
-  const $backdrop  = document.getElementById('age-backdrop');
-  const $btnCancel = document.getElementById('age-cancel');
-  const $btnGo     = document.getElementById('age-continue');
-
-  function lockScroll(on){ $root.style.overflow = $body.style.overflow = on ? 'hidden' : ''; }
-
-  function showModal(){
-    if(!$backdrop) return;
-    $backdrop.setAttribute('aria-hidden','false');
-    $backdrop.classList.add('show');
-    lockScroll(true);
-    try{ $btnGo.focus({preventScroll:true}); }catch(_){}
-  }
-
-  function destroyModal(){
-    try{ lockScroll(false); }catch(_){}
-    try{ $backdrop.setAttribute('aria-hidden','true'); }catch(_){}
-    try{ $backdrop.remove(); }catch(_){ $backdrop.style.display='none'; }
-  }
-
-  /* Hanya buka tab baru, JANGAN redirect halaman sekarang */
-  function openInNewTabOnly(url){
-    const a = document.createElement('a');
-    a.href = url;
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  }
-
-  /* Simpan TTL agar popup tak muncul lagi */
-  function rememberSkip(){
-    try { localStorage.setItem('age_ok_time', String(Date.now())); } catch(_) {}
-  }
-  function shouldSkip(){
-    try {
-      const t = +localStorage.getItem('age_ok_time') || 0;
-      return Date.now() - t < REMEMBER_TTL_MIN*60*1000;
-    } catch(_) { return false; }
-  }
-
-  function handleChoice(url, ev){
-    if(ev){
-      ev.preventDefault();
-      ev.stopPropagation();
-      if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
-    }
-    rememberSkip();
-    destroyModal();
-    openInNewTabOnly(url);
-  }
-
-  $btnGo.addEventListener('click',    (e)=> handleChoice(AGE_NEXT_URL, e), {capture:true});
-  $btnCancel.addEventListener('click',(e)=> handleChoice(OFFER_URL,  e), {capture:true});
-
-  // ESC menutup, klik backdrop tidak menutup
-  window.addEventListener('keydown', (e)=>{ if(e.key==='Escape') destroyModal(); });
-
-  // Tampilkan otomatis setelah delay, kecuali masih dalam TTL
-  window.addEventListener('load', ()=>{ if(!shouldSkip()) setTimeout(showModal, AUTO_SHOW_DELAY_MS); });
+    initVideo();
   </script>
-
   <!-- ===== Histats ===== -->
   <!-- Histats.com  START  (aync)-->
 <script type="text/javascript">var _Hasync= _Hasync|| [];
